@@ -1,0 +1,69 @@
+counter = 0; 
+file = dir('uploads\*.jpg');
+colorImage = imread([ file.name]);
+stroke = 0.36
+%counter = 0
+maxRegionSize = 2000;
+minRegionSize = 10;
+strokeVariance = stroke;
+areaSize = 2000;
+grayImage = rgb2gray(colorImage);
+mserRegions = detectMSERFeatures(grayImage,'RegionAreaRange',[minRegionSize, maxRegionSize]);
+mserRegionsPixels = vertcat(cell2mat(mserRegions.PixelList)); 
+mserMask = false(size(grayImage));
+ind = sub2ind(size(mserMask), mserRegionsPixels(:,2), mserRegionsPixels(:,1));
+mserMask(ind) = true;
+edgeMask = edge(grayImage, 'Canny');
+%edgeMask = edgeMask | edge(grayImage,'Sobel');
+edgeAndMSERIntersection = edgeMask & mserMask;
+[~, gDir] = imgradient(grayImage);
+gradientGrownEdgesMask = helperGrowEdges(edgeAndMSERIntersection, gDir, 'LightTextOnDark');
+edgeEnhancedMSERMask = ~gradientGrownEdgesMask & mserMask;
+a=mserMask-edgeEnhancedMSERMask;
+connComp = bwconncomp(a); % Find connected components
+stats = regionprops(connComp,'Area','Eccentricity','Solidity');
+regionFilteredTextMask = a;
+regionFilteredTextMask(vertcat(connComp.PixelIdxList{[stats.Eccentricity] > .995})) = 0;
+regionFilteredTextMask(vertcat(connComp.PixelIdxList{[stats.Area] < minRegionSize | [stats.Area] > maxRegionSize})) =0;
+regionFilteredTextMask(vertcat(connComp.PixelIdxList{[stats.Solidity] < .4})) = 0;
+distanceImage    = bwdist(~regionFilteredTextMask);  % Compute distance transform
+strokeWidthImage = helperStrokeWidth(distanceImage); % Compute stroke width image
+connComp = bwconncomp(regionFilteredTextMask);
+afterStrokeWidthTextMask = regionFilteredTextMask;
+for i = 1:connComp.NumObjects
+    strokewidths = strokeWidthImage(connComp.PixelIdxList{i});   %Computenormalized stroke width variation and compare to common value
+    if std(strokewidths)/mean(strokewidths) > strokeVariance
+        afterStrokeWidthTextMask(connComp.PixelIdxList{i}) = 0; % Remove from text candidates
+    end
+end
+se1=strel('disk',12);
+se2=strel('disk',4);
+%imshow(afterStrokeWidthTextMask);
+afterAgainMorphologyMask = imclose(afterStrokeWidthTextMask,se1);
+%imshow(afterMorphologyMask);
+%afterMorphologyMask = imopen(afterAgainMorphologyMask,se2);
+%imshow(afterAgainMorphologyMask);
+areaThreshold = areaSize % threshold inpixels
+connComp = bwconncomp(afterAgainMorphologyMask);
+stats = regionprops(connComp,'BoundingBox','Area');
+boxes = round(vertcat(stats(vertcat(stats.Area) > areaThreshold).BoundingBox));
+dir = int2str(100 * stroke)
+mkdir(dir)
+for i=1:size(boxes,1)
+    %figure;
+    padding = 15
+    coords = boxes(i,:);
+    coords(1) = coords(1) - padding;
+    coords(2) = coords(2) - padding;
+    coords(3) = coords(3) + padding;
+    coords(4) = coords(4) + padding;
+    %imshow(imcrop(colorImage, coords)); % Display segmented text
+    %title('Text region')
+
+    imwrite(imcrop(colorImage, coords),['downloads\' int2str(counter) '.jpg']);
+    counter = counter + 1;
+end
+
+if exist(['uploads\' x.name],'file') == 2
+    delete(['uploads\' x.name])
+end
